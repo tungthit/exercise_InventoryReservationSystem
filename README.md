@@ -1,6 +1,6 @@
 # Warehouse Inventory Reservation System
 
-High-concurrency inventory reservation service built with **Java 21**, **Spring WebFlux (Netty)**, **NATS JetStream**, **Redis**, and **PostgreSQL**.
+High-concurrency inventory reservation service built with **Java 21**, **Spring WebMVC (Virtual Threads)**, **NATS JetStream**, **Redis**, and **PostgreSQL**.
 
 ---
 
@@ -41,18 +41,18 @@ The application will automatically:
 1. Connect to PostgreSQL, Redis, and NATS.
 2. Run **Flyway** migration scripts to automatically create tables.
 3. Seed the database with sample inventory (SKUs `A100`, `B200`, `C300`).
-4. Start the Netty web server on `http://localhost:8080`.
+4. Start the Tomcat web server on `http://localhost:8080`.
 
 ## 🛠️ Tech Stack
 
 | Concern        | Technology                            |
 |----------------|---------------------------------------|
-| Server         | **Netty** (via Spring WebFlux)        |
+| Server         | **Tomcat** (via Spring WebMVC)        |
 | Language       | **Java 21**                           |
-| Framework      | Spring Boot 3.3 (reactive/WebFlux)    |
-| Database       | PostgreSQL 16 + **R2DBC** (reactive)  |
+| Framework      | Spring Boot 3.3 (Virtual Threads)     |
+| Database       | PostgreSQL 16 + **Data JDBC**         |
 | Migrations     | Flyway (JDBC)                         |
-| Cache          | Redis 7 + Lettuce (reactive)          |
+| Cache          | Redis 7 + Lettuce (synchronous)       |
 | Dist. Lock     | **Redisson** per-SKU locks            |
 | Message Broker | **NATS JetStream** (at-least-once)    |
 | AOT            | `RuntimeHintsRegistrar` (GraalVM-ready)|
@@ -60,9 +60,9 @@ The application will automatically:
 
 ### Why we chose these technologies for this use-case:
 
-- **Java 21**: Offers Virtual Threads capability (though we opted for raw Reactive Streams here for maximum raw throughput), excellent pattern matching, and record types which perfectly suit Domain-Driven Design aggregates.
-- **Spring WebFlux (Netty)**: Inventory reservation is a highly I/O bound process (waiting on database locks, Redis locks, and message brokers). A non-blocking Netty server means we don't block an OS thread for every concurrent HTTP request, allowing us to handle thousands of concurrent requests on minimal compute resources.
-- **PostgreSQL + R2DBC**: Relational databases are critical for inventory because we absolutely need ACID compliance and `SELECT ... FOR UPDATE` row-level locking to prevent overselling. R2DBC provides a reactive, non-blocking driver to PostgreSQL to match Netty's architecture.
+- **Java 21**: Provides the massive scalability of **Project Loom's Virtual Threads**. We can handle immense concurrency with millions of lightweight threads while writing standard imperative, readable code.
+- **Spring WebMVC (Tomcat) with Virtual Threads**: Inventory reservation is highly I/O bound (waiting on database and Redis locks). By enabling Virtual Threads, Tomcat maps each HTTP request to a virtual thread instead of an OS thread. The JVM automatically unmounts the thread during block/wait states, providing the exact same high-throughput and low resource footprint as WebFlux but without the complex `Mono`/`Flux` reactive pipelines.
+- **PostgreSQL + Spring Data JDBC**: Relational databases are critical for inventory because we absolutely need ACID compliance and `SELECT ... FOR UPDATE` row-level locking to prevent overselling. Standard JDBC transactions run smoothly on Virtual Threads.
 - **Redis (Redisson)**: We use this as a first-line-of-defense distributed lock. Instead of sending 100 concurrent requests to hammer the database row, Redisson queues or fast-fails them at the cache layer, keeping the database healthy under spike loads (e.g. Flash Sales).
 - **NATS JetStream**: Standard NATS is fire-and-forget. JetStream provides lightweight, persistent, at-least-once message delivery. When a reservation drops, a downstream service (like fulfillment or notification) is guaranteed to receive the event even if they are temporarily offline.
 
@@ -72,7 +72,7 @@ The application will automatically:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│          REST API  (Netty / Non-blocking)       │
+│      REST API (Tomcat + Virtual Threads)        │
 │   POST /api/reservations                        │
 │   POST /api/reservations/{id}/confirm           │
 │   POST /api/reservations/{id}/cancel            │
@@ -89,7 +89,7 @@ The application will automatically:
 │ Domain Layer   │  │      Infrastructure Layer   │
 │ Entities       │  │  Redis  (Cache + Lock)      │
 │ Repositories   │  │  NATS JetStream (Events)    │
-│ Port Interfaces│  │  PostgreSQL + R2DBC         │
+│ Port Interfaces│  │  PostgreSQL + JDBC          │
 └────────────────┘  └─────────────────────────────┘
 ```
 
@@ -100,7 +100,7 @@ The application will automatically:
 Two-level guard prevents overselling across any number of replicas:
 
 1. **Redisson distributed lock** (per SKU) – acquired before reading inventory. Prevents two concurrent requests on different pods from seeing the same uncommitted available stock.
-2. **Pessimistic DB row lock** (`SELECT … FOR UPDATE`) – inside the R2DBC transaction. Ensures 100% correctness even if the distributed lock layer fails.
+2. **Pessimistic DB row lock** (`SELECT … FOR UPDATE`) – inside the standard JDBC transaction. Ensures 100% correctness even if the distributed lock layer fails.
 3. **`@Version` optimistic lock** – final defence on the `inventory` table row.
 
 ```
