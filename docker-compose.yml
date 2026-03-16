@@ -38,7 +38,7 @@ services:
     ports:
       - "4222:4222"   # client
       - "8222:8222"   # HTTP monitoring
-    command: ["--js", "--sd", "/data"]   # enable JetStream with file storage
+    command: ["--js", "--sd", "/data", "-m", "8222"]   # enable JetStream and HTTP monitor
     volumes:
       - nats_data:/data
     healthcheck:

@@ -72,7 +72,7 @@ The application will automatically:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│          REST API  (Netty / Non-blocking)        │
+│          REST API  (Netty / Non-blocking)       │
 │   POST /api/reservations                        │
 │   POST /api/reservations/{id}/confirm           │
 │   POST /api/reservations/{id}/cancel            │
@@ -86,10 +86,10 @@ The application will automatically:
 └─────────┬────────────────────┬──────────────────┘
           │                    │
 ┌─────────▼──────┐  ┌──────────▼──────────────────┐
-│  Domain Layer  │  │      Infrastructure Layer    │
-│  Entities      │  │  Redis  (Cache + Lock)       │
-│  Repositories  │  │  NATS JetStream (Events)     │
-│  Port Interfaces│  │  PostgreSQL + R2DBC         │
+│ Domain Layer   │  │      Infrastructure Layer   │
+│ Entities       │  │  Redis  (Cache + Lock)      │
+│ Repositories   │  │  NATS JetStream (Events)    │
+│ Port Interfaces│  │  PostgreSQL + R2DBC         │
 └────────────────┘  └─────────────────────────────┘
 ```
 
@@ -123,15 +123,6 @@ Replica B  ──► Redis LOCK "A100"  (waits)           ──► DB FOR UPDAT
 
 ---
 
-## 🧪 Testing & API Reference
-
-Please see [how_to_test.md](how_to_test.md) for detailed instructions on:
-- Smoke testing the API with curl
-- Full REST API Request/Response schemas
-- How to execute the unit test suite
-
----
-
 ## ⚖️ Horizontal Scaling
 
 The service is stateless by design:
@@ -150,9 +141,27 @@ kubectl scale deployment inventory-reservation --replicas=3
 
 ## 📊 Observability
 
-- **Health**: `GET /actuator/health`
-- **Metrics**: `GET /actuator/metrics`
-- **NATS monitor**: `http://localhost:8222`
+This application exposes monitoring endpoints to track performance, health, and message broker status.
+
+### Spring Boot Actuator
+- **Health Check**: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
+- **Application Metrics**: [http://localhost:8080/actuator/metrics](http://localhost:8080/actuator/metrics)
+
+### NATS JetStream Dashboard
+The NATS monitoring server is exposed locally to inspect broker statistics and connections:
+- **Main Dashboard**: [http://localhost:8222](http://localhost:8222)
+- **JetStream Metrics**: [http://localhost:8222/jsz](http://localhost:8222/jsz) (Shows streams, consumers, and message volume)
+- **Active Connections**: [http://localhost:8222/connz](http://localhost:8222/connz) (Shows active Spring Boot clients)
+- **Server Health**: [http://localhost:8222/varz](http://localhost:8222/varz)
+
+---
+
+## 🧪 Testing & API Reference
+
+Please see [how_to_test.md](how_to_test.md) for detailed instructions on:
+- Smoke testing the API with curl
+- Full REST API Request/Response schemas
+- How to execute the unit test suite
 
 ---
 
