@@ -4,7 +4,7 @@ High-concurrency inventory reservation service built with **Java 21**, **Spring 
 
 ---
 
-## How to Run Locally
+## 🚀 How to Run Locally
 
 ### 1. Prerequisites (What you need installed)
 
@@ -43,7 +43,7 @@ The application will automatically:
 3. Seed the database with sample inventory (SKUs `A100`, `B200`, `C300`).
 4. Start the Netty web server on `http://localhost:8080`.
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Concern        | Technology                            |
 |----------------|---------------------------------------|
@@ -68,7 +68,7 @@ The application will automatically:
 
 ---
 
-## Architecture Overview
+## 🏛️ Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -95,7 +95,7 @@ The application will automatically:
 
 ---
 
-## Concurrency Strategy
+## 🚦 Concurrency Strategy
 
 Two-level guard prevents overselling across any number of replicas:
 
@@ -110,7 +110,7 @@ Replica B  ──► Redis LOCK "A100"  (waits)           ──► DB FOR UPDAT
 
 ---
 
-## Design Patterns
+## 🧩 Design Patterns
 
 | Pattern      | Location                                 | Purpose                                                    |
 |--------------|------------------------------------------|------------------------------------------------------------|
@@ -123,7 +123,7 @@ Replica B  ──► Redis LOCK "A100"  (waits)           ──► DB FOR UPDAT
 
 ---
 
-## Testing & API Reference
+## 🧪 Testing & API Reference
 
 Please see [how_to_test.md](how_to_test.md) for detailed instructions on:
 - Smoke testing the API with curl
@@ -132,7 +132,7 @@ Please see [how_to_test.md](how_to_test.md) for detailed instructions on:
 
 ---
 
-## Horizontal Scaling
+## ⚖️ Horizontal Scaling
 
 The service is stateless by design:
 
@@ -148,7 +148,7 @@ kubectl scale deployment inventory-reservation --replicas=3
 
 ---
 
-## Observability
+## 📊 Observability
 
 - **Health**: `GET /actuator/health`
 - **Metrics**: `GET /actuator/metrics`
@@ -156,7 +156,7 @@ kubectl scale deployment inventory-reservation --replicas=3
 
 ---
 
-### Package Structure
+### 📦 Package Structure
 
 ```
 com.warehouse.inventory
