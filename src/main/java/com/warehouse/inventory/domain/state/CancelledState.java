@@ -14,6 +14,7 @@ public class CancelledState implements ReservationState {
 
     @Override
     public Reservation cancel(Reservation reservation) {
-        throw new InvalidStateTransitionException(ReservationStatus.CANCELLED, "cancel");
+        // Idempotent: already cancelled, just return it
+        return reservation;
     }
 }

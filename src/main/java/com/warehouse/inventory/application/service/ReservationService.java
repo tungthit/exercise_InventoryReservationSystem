@@ -73,14 +73,23 @@ public class ReservationService {
     public Mono<ReservationResponse> confirmReservation(UUID id) {
         return reservationRepository.findById(id)
                 .switchIfEmpty(Mono.error(new ReservationNotFoundException(id)))
-                .map(stateMachine::confirm)
-                .flatMap(reservationRepository::save)
-                .flatMap(saved ->
-                        reservationItemRepository.findByReservationId(id)
-                                .collectList()
-                                .flatMap(items -> publishAndReturn(
-                                        new ReservationConfirmedEvent(saved.getId(), saved.getOrderId()),
-                                        new ReservationAggregate(saved, items))));
+                .flatMap(reservation -> {
+                    Reservation confirmed = stateMachine.confirm(reservation);
+                    
+                    return reservationItemRepository.findByReservationId(id)
+                            .collectList()
+                            .flatMap(items -> {
+                                if (reservation == confirmed) {
+                                    // Idempotent: already confirmed. Return current state.
+                                    return Mono.just(toResponse(new ReservationAggregate(reservation, items)));
+                                }
+                                
+                                return reservationRepository.save(confirmed)
+                                        .flatMap(saved -> publishAndReturn(
+                                                new ReservationConfirmedEvent(saved.getId(), saved.getOrderId()),
+                                                new ReservationAggregate(saved, items)));
+                            });
+                });
     }
 
     // ─── Cancel ───────────────────────────────────────────────────────────────
@@ -94,6 +103,12 @@ public class ReservationService {
                                 .collectList()
                                 .flatMap(items -> {
                                     Reservation cancelled = stateMachine.cancel(reservation);
+                                    
+                                    if (reservation == cancelled) {
+                                        // Idempotent: already cancelled. Return current state.
+                                        return Mono.just(toResponse(new ReservationAggregate(reservation, items)));
+                                    }
+                                    
                                     return releaseAllStock(items)
                                             .then(reservationRepository.save(cancelled))
                                             .flatMap(saved -> publishAndReturn(

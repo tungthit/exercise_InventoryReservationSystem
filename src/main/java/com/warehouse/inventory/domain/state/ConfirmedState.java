@@ -9,7 +9,8 @@ public class ConfirmedState implements ReservationState {
 
     @Override
     public Reservation confirm(Reservation reservation) {
-        throw new InvalidStateTransitionException(ReservationStatus.CONFIRMED, "confirm");
+        // Idempotent: already confirmed, just return it
+        return reservation;
     }
 
     @Override
