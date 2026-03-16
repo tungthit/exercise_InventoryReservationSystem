@@ -53,11 +53,12 @@ class ReservationStateMachineTest {
     // ── Terminal state guards ─────────────────────────────────────────────────
 
     @Test
-    @DisplayName("CONFIRMED is terminal – confirm() throws")
+    @DisplayName("CONFIRMED is idempotent – confirm() returns same instance")
     void confirmedCannotConfirmAgain() {
         Reservation confirmed = reservationWith(ReservationStatus.CONFIRMED);
-        assertThatThrownBy(() -> stateMachine.confirm(confirmed))
-                .isInstanceOf(InvalidStateTransitionException.class);
+        Reservation result = stateMachine.confirm(confirmed);
+        assertThat(result).isSameAs(confirmed);
+        assertThat(result.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
     }
 
     @Test
@@ -77,11 +78,12 @@ class ReservationStateMachineTest {
     }
 
     @Test
-    @DisplayName("CANCELLED is terminal – cancel() throws")
+    @DisplayName("CANCELLED is idempotent – cancel() returns same instance")
     void cancelledCannotBeCancelledAgain() {
         Reservation cancelled = reservationWith(ReservationStatus.CANCELLED);
-        assertThatThrownBy(() -> stateMachine.cancel(cancelled))
-                .isInstanceOf(InvalidStateTransitionException.class);
+        Reservation result = stateMachine.cancel(cancelled);
+        assertThat(result).isSameAs(cancelled);
+        assertThat(result.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
     }
 
     // ── Immutability ──────────────────────────────────────────────────────────

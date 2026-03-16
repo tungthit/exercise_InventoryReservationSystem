@@ -1,5 +1,6 @@
 package com.warehouse.inventory.application.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.warehouse.inventory.api.dto.CreateReservationRequest;
 import com.warehouse.inventory.api.dto.ReservationItemResponse;
 import com.warehouse.inventory.api.dto.ReservationResponse;
@@ -8,10 +9,11 @@ import com.warehouse.inventory.domain.event.ReservationCancelledEvent;
 import com.warehouse.inventory.domain.event.ReservationConfirmedEvent;
 import com.warehouse.inventory.domain.event.ReservationCreatedEvent;
 import com.warehouse.inventory.domain.exception.ReservationNotFoundException;
+import com.warehouse.inventory.domain.model.OutboxEvent;
 import com.warehouse.inventory.domain.model.Reservation;
 import com.warehouse.inventory.domain.model.ReservationAggregate;
 import com.warehouse.inventory.domain.model.ReservationItem;
-import com.warehouse.inventory.domain.port.EventPublisher;
+import com.warehouse.inventory.domain.repository.OutboxEventRepository;
 import com.warehouse.inventory.domain.repository.ReservationItemRepository;
 import com.warehouse.inventory.domain.repository.ReservationRepository;
 import com.warehouse.inventory.domain.state.ReservationStateMachine;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -43,10 +46,11 @@ public class ReservationService {
 
     private final ReservationRepository     reservationRepository;
     private final ReservationItemRepository reservationItemRepository;
+    private final OutboxEventRepository     outboxEventRepository;
     private final InventoryService          inventoryService;
     private final ReservationFactory        reservationFactory;
     private final ReservationStateMachine   stateMachine;
-    private final EventPublisher            eventPublisher;
+    private final ObjectMapper              objectMapper;
 
     // ─── Create ───────────────────────────────────────────────────────────────
 
@@ -146,12 +150,22 @@ public class ReservationService {
                                 .map(savedItems -> new ReservationAggregate(savedReservation, savedItems)));
     }
 
-    /** Publishes event (fire-and-forget errors are logged, not propagated) and maps to response. */
+    /** Publishes event via Outbox Pattern (saved in the same DB transaction) and maps to response. */
     private <E extends com.warehouse.inventory.domain.event.DomainEvent>
-    Mono<ReservationResponse> publishAndReturn(E event, ReservationAggregate aggregate) {
-        return eventPublisher.publish(event)
-                .doOnError(err -> log.warn("Failed to publish event {}: {}", event.getEventType(), err.getMessage()))
-                .onErrorComplete()
+    Mono<ReservationResponse> publishAndReturn(E domainEvent, ReservationAggregate aggregate) {
+        return Mono.fromCallable(() -> objectMapper.writeValueAsString(domainEvent))
+                .flatMap(payload -> {
+                    OutboxEvent outboxEvent = OutboxEvent.builder()
+                            .aggregateType("RESERVATION")
+                            .aggregateId(aggregate.reservation().getId().toString())
+                            .type(domainEvent.getEventType())
+                            .payload(payload)
+                            .createdAt(Instant.now())
+                            .isNew(true)
+                            .build();
+                    return outboxEventRepository.save(outboxEvent);
+                })
+                .doOnError(err -> log.error("Failed to save outbox event {}: {}", domainEvent.getEventType(), err.getMessage()))
                 .thenReturn(toResponse(aggregate));
     }
 

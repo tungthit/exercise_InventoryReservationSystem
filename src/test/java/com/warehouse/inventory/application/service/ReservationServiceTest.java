@@ -7,7 +7,7 @@ import com.warehouse.inventory.application.factory.ReservationFactory;
 import com.warehouse.inventory.domain.event.ReservationCreatedEvent;
 import com.warehouse.inventory.domain.exception.InsufficientStockException;
 import com.warehouse.inventory.domain.model.*;
-import com.warehouse.inventory.domain.port.EventPublisher;
+import com.warehouse.inventory.domain.repository.OutboxEventRepository;
 import com.warehouse.inventory.domain.repository.ReservationItemRepository;
 import com.warehouse.inventory.domain.repository.ReservationRepository;
 import com.warehouse.inventory.domain.state.ReservationStateMachine;
@@ -39,7 +39,8 @@ class ReservationServiceTest {
     @Mock private InventoryService          inventoryService;
     @Mock private ReservationFactory        reservationFactory;
     @Mock private ReservationStateMachine   stateMachine;
-    @Mock private EventPublisher            eventPublisher;
+    @Mock private OutboxEventRepository     outboxEventRepository;
+    @Mock private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -76,7 +77,10 @@ class ReservationServiceTest {
         when(inventoryService.reserveStock("A100", 5)).thenReturn(Mono.empty());
         when(reservationRepository.save(pendingReservation)).thenReturn(Mono.just(pendingReservation));
         when(reservationItemRepository.save(item)).thenReturn(Mono.just(item));
-        when(eventPublisher.publish(any())).thenReturn(Mono.empty());
+        try {
+            when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        } catch (Exception e) {}
+        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
 
         CreateReservationRequest request = new CreateReservationRequest(
                 "ORD-1001", List.of(new ReservationItemRequest("A100", 5)));
@@ -90,7 +94,7 @@ class ReservationServiceTest {
                 .verifyComplete();
 
         verify(inventoryService).reserveStock("A100", 5);
-        verify(eventPublisher).publish(any(ReservationCreatedEvent.class));
+        verify(outboxEventRepository).save(any(OutboxEvent.class));
     }
 
     @Test
@@ -122,7 +126,10 @@ class ReservationServiceTest {
         when(stateMachine.confirm(pendingReservation)).thenReturn(confirmed);
         when(reservationRepository.save(confirmed)).thenReturn(Mono.just(confirmed));
         when(reservationItemRepository.findByReservationId(reservationId)).thenReturn(Flux.just(item));
-        when(eventPublisher.publish(any())).thenReturn(Mono.empty());
+        try {
+            when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        } catch (Exception e) {}
+        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
 
         StepVerifier.create(reservationService.confirmReservation(reservationId))
                 .assertNext(response -> assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED))
@@ -141,7 +148,10 @@ class ReservationServiceTest {
         when(stateMachine.cancel(pendingReservation)).thenReturn(cancelled);
         when(inventoryService.releaseStock("A100", 5)).thenReturn(Mono.empty());
         when(reservationRepository.save(cancelled)).thenReturn(Mono.just(cancelled));
-        when(eventPublisher.publish(any())).thenReturn(Mono.empty());
+        try {
+            when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        } catch (Exception e) {}
+        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
 
         StepVerifier.create(reservationService.cancelReservation(reservationId))
                 .assertNext(response -> assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED))
