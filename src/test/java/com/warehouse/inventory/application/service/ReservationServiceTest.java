@@ -149,4 +149,61 @@ class ReservationServiceTest {
 
         verify(inventoryService).releaseStock("A100", 5);
     }
+
+    @Test
+    @DisplayName("cancelReservation throws ReservationNotFoundException if ID not found")
+    void cancelReservation_notFound() {
+        when(reservationRepository.findById(reservationId)).thenReturn(Mono.empty());
+
+        StepVerifier.create(reservationService.cancelReservation(reservationId))
+                .expectError(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("confirmReservation throws ReservationNotFoundException if ID not found")
+    void confirmReservation_notFound() {
+        when(reservationRepository.findById(reservationId)).thenReturn(Mono.empty());
+
+        StepVerifier.create(reservationService.confirmReservation(reservationId))
+                .expectError(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("confirmReservation propagates InvalidStateTransitionException")
+    void confirmReservation_invalidState() {
+        when(reservationRepository.findById(reservationId)).thenReturn(Mono.just(pendingReservation));
+        when(stateMachine.confirm(pendingReservation)).thenThrow(
+                new com.warehouse.inventory.domain.exception.InvalidStateTransitionException(ReservationStatus.CONFIRMED, "confirm"));
+
+        StepVerifier.create(reservationService.confirmReservation(reservationId))
+                .expectError(com.warehouse.inventory.domain.exception.InvalidStateTransitionException.class)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("createReservation with multiple items fails fast if second item lacks stock")
+    void createReservation_partialFailure() {
+        ReservationItem item2 = ReservationItem.builder()
+                .id(UUID.randomUUID()).reservationId(reservationId).sku("B200").quantity(10).build();
+        ReservationAggregate aggregate = new ReservationAggregate(pendingReservation, List.of(item, item2));
+
+        when(reservationFactory.create(any())).thenReturn(Mono.just(aggregate));
+
+        // First item succeeds
+        when(inventoryService.reserveStock("A100", 5)).thenReturn(Mono.empty());
+        // Second item fails
+        when(inventoryService.reserveStock("B200", 10)).thenReturn(Mono.error(new InsufficientStockException("Not enough B200")));
+
+        CreateReservationRequest request = new CreateReservationRequest(
+                "ORD-1001", List.of(new ReservationItemRequest("A100", 5), new ReservationItemRequest("B200", 10)));
+
+        StepVerifier.create(reservationService.createReservation(request))
+                .expectErrorMatches(t -> t instanceof InsufficientStockException && t.getMessage().contains("B200"))
+                .verify();
+
+        // Ensure we don't save the aggregate if creating fails halfway
+        verify(reservationRepository, never()).save(any());
+    }
 }

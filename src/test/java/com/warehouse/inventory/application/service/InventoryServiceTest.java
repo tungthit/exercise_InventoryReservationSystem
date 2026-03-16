@@ -129,6 +129,30 @@ class InventoryServiceTest {
                 .verifyComplete();
     }
 
+    @Test
+    @DisplayName("getAvailableStock returns empty when SKU does not exist")
+    void getAvailableStock_notFound() {
+        when(cacheService.getAvailableStock("UNKNOWN")).thenReturn(Mono.empty());
+        when(inventoryRepository.findByProductSku("UNKNOWN")).thenReturn(Mono.empty());
+
+        StepVerifier.create(inventoryService.getAvailableStock("UNKNOWN"))
+                .verifyComplete(); // returns Mono.empty()
+    }
+
+    @Test
+    @DisplayName("reserveStock fails fast when distributed lock cannot be acquired")
+    void reserveStock_lockFailure() {
+        when(lockService.executeWithLock(eq("inventory:lock:A100"), any(), any()))
+                .thenReturn(Mono.error(new com.warehouse.inventory.infrastructure.lock.LockAcquisitionException("Lock failed")));
+
+        StepVerifier.create(inventoryService.reserveStock("A100", 10))
+                .expectError(com.warehouse.inventory.infrastructure.lock.LockAcquisitionException.class)
+                .verify();
+
+        verifyNoInteractions(inventoryRepository);
+        verifyNoInteractions(cacheService);
+    }
+
     /**
      * Concurrency guard – verifies the domain model prevents overselling
      * even when multiple simultaneous calls arrive (lock pass-through).
