@@ -63,6 +63,7 @@ public class ReservationFactory {
                             .status(ReservationStatus.PENDING)
                             .createdAt(now)
                             .updatedAt(now)
+                            .isNew(true)   // signals R2DBC to INSERT, not UPDATE
                             .build();
 
                     List<ReservationItem> items = request.items().stream()
@@ -71,6 +72,7 @@ public class ReservationFactory {
                                     .reservationId(reservationId)
                                     .sku(req.sku())
                                     .quantity(req.quantity())
+                                    .isNew(true)   // signals R2DBC to INSERT, not UPDATE
                                     .build())
                             .toList();
 

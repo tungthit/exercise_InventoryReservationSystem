@@ -42,8 +42,11 @@ public class RedissonLockService implements LockService {
                     return operation.get()
                             .doFinally(signal -> {
                                 log.debug("Releasing distributed lock: {} (signal={})", key, signal);
-                                lock.unlock().subscribe(
-                                        unused -> {},
+                                // forceUnlock() is required in reactive pipelines: doFinally may run on
+                                // a different Netty IO thread than the one that acquired the lock.
+                                // Redisson's unlock() validates thread-id ownership and throws if mismatched.
+                                lock.forceUnlock().subscribe(
+                                        released -> log.debug("Lock {} force-released={}", key, released),
                                         err -> log.warn("Error releasing lock {}: {}", key, err.getMessage()));
                             });
                 });

@@ -77,15 +77,21 @@ public class InventoryService {
         );
     }
 
-    /** Returns available stock for a SKU, checking the Redis cache first. */
+    /**
+     * Returns available stock for a SKU, checking the Redis cache first.
+     *
+     * <p>The DB fallback is wrapped in {@code Mono.defer()} so the repository
+     * call is only made when the cache actually misses — not when the pipeline
+     * is assembled. Without defer, the method call happens eagerly, bypassing
+     * the cache-aside short-circuit on a cache hit.
+     */
     public Mono<Integer> getAvailableStock(String sku) {
         return cacheService.getAvailableStock(sku)
-                .switchIfEmpty(
+                .switchIfEmpty(Mono.defer(() ->
                         inventoryRepository.findByProductSku(sku)
-                                .map(inv -> {
-                                    cacheService.setAvailableStock(sku, inv.getAvailableStock()).subscribe();
-                                    return inv.getAvailableStock();
-                                })
-                );
+                                .flatMap(inv -> cacheService
+                                        .setAvailableStock(sku, inv.getAvailableStock())
+                                        .thenReturn(inv.getAvailableStock()))
+                ));
     }
 }

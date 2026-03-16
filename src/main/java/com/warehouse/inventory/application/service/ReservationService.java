@@ -53,9 +53,13 @@ public class ReservationService {
     @Transactional
     public Mono<ReservationResponse> createReservation(CreateReservationRequest request) {
         return reservationFactory.create(request)
-                .flatMap(aggregate -> reserveAllStock(aggregate)
-                        .then(persistAggregate(aggregate))
-                )
+                // Step 1: reserve stock for all items (fails fast on insufficient stock)
+                .flatMap(aggregate -> reserveAllStock(aggregate).thenReturn(aggregate))
+                // Step 2: persist only after ALL stock reservations succeed
+                // Split into a separate flatMap so persistAggregate() is not called
+                // eagerly as a .then() argument — which would invoke repo.save() before
+                // reserveAllStock even starts.
+                .flatMap(this::persistAggregate)
                 .flatMap(aggregate -> publishAndReturn(
                         new ReservationCreatedEvent(
                                 aggregate.reservation().getId(),
