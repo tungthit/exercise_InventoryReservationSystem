@@ -18,9 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
+
 
 import java.time.Instant;
 import java.util.List;
@@ -73,25 +71,23 @@ class ReservationServiceTest {
     @DisplayName("createReservation succeeds on happy path")
     void createReservation_success() {
         ReservationAggregate aggregate = new ReservationAggregate(pendingReservation, List.of(item));
-        when(reservationFactory.create(any())).thenReturn(Mono.just(aggregate));
-        when(inventoryService.reserveStock("A100", 5)).thenReturn(Mono.empty());
-        when(reservationRepository.save(pendingReservation)).thenReturn(Mono.just(pendingReservation));
-        when(reservationItemRepository.save(item)).thenReturn(Mono.just(item));
+        when(reservationFactory.create(any())).thenReturn(aggregate);
+        // inventoryService.reserveStock is void, so default mock behavior is success
+        when(reservationRepository.save(pendingReservation)).thenReturn(pendingReservation);
+        when(reservationItemRepository.save(item)).thenReturn(item);
         try {
             when(objectMapper.writeValueAsString(any())).thenReturn("{}");
         } catch (Exception e) {}
-        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
+        when(outboxEventRepository.save(any())).thenReturn(new OutboxEvent());
 
         CreateReservationRequest request = new CreateReservationRequest(
                 "ORD-1001", List.of(new ReservationItemRequest("A100", 5)));
 
-        StepVerifier.create(reservationService.createReservation(request))
-                .assertNext(response -> {
-                    assertThat(response.orderId()).isEqualTo("ORD-1001");
-                    assertThat(response.status()).isEqualTo(ReservationStatus.PENDING);
-                    assertThat(response.items()).hasSize(1);
-                })
-                .verifyComplete();
+        ReservationResponse response = reservationService.createReservation(request);
+
+        assertThat(response.orderId()).isEqualTo("ORD-1001");
+        assertThat(response.status()).isEqualTo(ReservationStatus.PENDING);
+        assertThat(response.items()).hasSize(1);
 
         verify(inventoryService).reserveStock("A100", 5);
         verify(outboxEventRepository).save(any(OutboxEvent.class));
@@ -101,16 +97,16 @@ class ReservationServiceTest {
     @DisplayName("createReservation propagates InsufficientStockException")
     void createReservation_insufficientStock() {
         ReservationAggregate aggregate = new ReservationAggregate(pendingReservation, List.of(item));
-        when(reservationFactory.create(any())).thenReturn(Mono.just(aggregate));
-        when(inventoryService.reserveStock("A100", 5))
-                .thenReturn(Mono.error(new InsufficientStockException("Not enough stock")));
+        when(reservationFactory.create(any())).thenReturn(aggregate);
+        doThrow(new InsufficientStockException("Not enough stock"))
+                .when(inventoryService).reserveStock("A100", 5);
 
         CreateReservationRequest request = new CreateReservationRequest(
                 "ORD-1001", List.of(new ReservationItemRequest("A100", 5)));
 
-        StepVerifier.create(reservationService.createReservation(request))
-                .expectError(InsufficientStockException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(InsufficientStockException.class, () ->
+            reservationService.createReservation(request)
+        );
 
         verify(reservationRepository, never()).save(any());
     }
@@ -122,18 +118,18 @@ class ReservationServiceTest {
     void confirmReservation_success() {
         Reservation confirmed = pendingReservation.toBuilder()
                 .status(ReservationStatus.CONFIRMED).build();
-        when(reservationRepository.findById(reservationId)).thenReturn(Mono.just(pendingReservation));
+        when(reservationRepository.findById(reservationId)).thenReturn(java.util.Optional.of(pendingReservation));
         when(stateMachine.confirm(pendingReservation)).thenReturn(confirmed);
-        when(reservationRepository.save(confirmed)).thenReturn(Mono.just(confirmed));
-        when(reservationItemRepository.findByReservationId(reservationId)).thenReturn(Flux.just(item));
+        when(reservationRepository.save(confirmed)).thenReturn(confirmed);
+        when(reservationItemRepository.findByReservationId(reservationId)).thenReturn(List.of(item));
         try {
             when(objectMapper.writeValueAsString(any())).thenReturn("{}");
         } catch (Exception e) {}
-        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
+        when(outboxEventRepository.save(any())).thenReturn(new OutboxEvent());
 
-        StepVerifier.create(reservationService.confirmReservation(reservationId))
-                .assertNext(response -> assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED))
-                .verifyComplete();
+        ReservationResponse response = reservationService.confirmReservation(reservationId);
+        
+        assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED);
     }
 
     // ─── cancelReservation ────────────────────────────────────────────────────
@@ -143,19 +139,19 @@ class ReservationServiceTest {
     void cancelReservation_releasesStock() {
         Reservation cancelled = pendingReservation.toBuilder()
                 .status(ReservationStatus.CANCELLED).build();
-        when(reservationRepository.findById(reservationId)).thenReturn(Mono.just(pendingReservation));
-        when(reservationItemRepository.findByReservationId(reservationId)).thenReturn(Flux.just(item));
+        when(reservationRepository.findById(reservationId)).thenReturn(java.util.Optional.of(pendingReservation));
+        when(reservationItemRepository.findByReservationId(reservationId)).thenReturn(List.of(item));
         when(stateMachine.cancel(pendingReservation)).thenReturn(cancelled);
-        when(inventoryService.releaseStock("A100", 5)).thenReturn(Mono.empty());
-        when(reservationRepository.save(cancelled)).thenReturn(Mono.just(cancelled));
+        // releaseStock is void
+        when(reservationRepository.save(cancelled)).thenReturn(cancelled);
         try {
             when(objectMapper.writeValueAsString(any())).thenReturn("{}");
         } catch (Exception e) {}
-        when(outboxEventRepository.save(any())).thenReturn(Mono.just(new OutboxEvent()));
+        when(outboxEventRepository.save(any())).thenReturn(new OutboxEvent());
 
-        StepVerifier.create(reservationService.cancelReservation(reservationId))
-                .assertNext(response -> assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED))
-                .verifyComplete();
+        ReservationResponse response = reservationService.cancelReservation(reservationId);
+        
+        assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
 
         verify(inventoryService).releaseStock("A100", 5);
     }
@@ -163,33 +159,33 @@ class ReservationServiceTest {
     @Test
     @DisplayName("cancelReservation throws ReservationNotFoundException if ID not found")
     void cancelReservation_notFound() {
-        when(reservationRepository.findById(reservationId)).thenReturn(Mono.empty());
+        when(reservationRepository.findById(reservationId)).thenReturn(java.util.Optional.empty());
 
-        StepVerifier.create(reservationService.cancelReservation(reservationId))
-                .expectError(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class, () ->
+            reservationService.cancelReservation(reservationId)
+        );
     }
 
     @Test
     @DisplayName("confirmReservation throws ReservationNotFoundException if ID not found")
     void confirmReservation_notFound() {
-        when(reservationRepository.findById(reservationId)).thenReturn(Mono.empty());
+        when(reservationRepository.findById(reservationId)).thenReturn(java.util.Optional.empty());
 
-        StepVerifier.create(reservationService.confirmReservation(reservationId))
-                .expectError(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(com.warehouse.inventory.domain.exception.ReservationNotFoundException.class, () ->
+            reservationService.confirmReservation(reservationId)
+        );
     }
 
     @Test
     @DisplayName("confirmReservation propagates InvalidStateTransitionException")
     void confirmReservation_invalidState() {
-        when(reservationRepository.findById(reservationId)).thenReturn(Mono.just(pendingReservation));
+        when(reservationRepository.findById(reservationId)).thenReturn(java.util.Optional.of(pendingReservation));
         when(stateMachine.confirm(pendingReservation)).thenThrow(
                 new com.warehouse.inventory.domain.exception.InvalidStateTransitionException(ReservationStatus.CONFIRMED, "confirm"));
 
-        StepVerifier.create(reservationService.confirmReservation(reservationId))
-                .expectError(com.warehouse.inventory.domain.exception.InvalidStateTransitionException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(com.warehouse.inventory.domain.exception.InvalidStateTransitionException.class, () ->
+            reservationService.confirmReservation(reservationId)
+        );
     }
 
     @Test
@@ -199,19 +195,20 @@ class ReservationServiceTest {
                 .id(UUID.randomUUID()).reservationId(reservationId).sku("B200").quantity(10).build();
         ReservationAggregate aggregate = new ReservationAggregate(pendingReservation, List.of(item, item2));
 
-        when(reservationFactory.create(any())).thenReturn(Mono.just(aggregate));
+        when(reservationFactory.create(any())).thenReturn(aggregate);
 
-        // First item succeeds
-        when(inventoryService.reserveStock("A100", 5)).thenReturn(Mono.empty());
+        // First item succeeds (do nothing)
         // Second item fails
-        when(inventoryService.reserveStock("B200", 10)).thenReturn(Mono.error(new InsufficientStockException("Not enough B200")));
+        lenient().doThrow(new InsufficientStockException("Not enough B200"))
+            .when(inventoryService).reserveStock("B200", 10);
 
         CreateReservationRequest request = new CreateReservationRequest(
                 "ORD-1001", List.of(new ReservationItemRequest("A100", 5), new ReservationItemRequest("B200", 10)));
 
-        StepVerifier.create(reservationService.createReservation(request))
-                .expectErrorMatches(t -> t instanceof InsufficientStockException && t.getMessage().contains("B200"))
-                .verify();
+        Throwable t = org.junit.jupiter.api.Assertions.assertThrows(InsufficientStockException.class, () ->
+            reservationService.createReservation(request)
+        );
+        assertThat(t.getMessage()).contains("B200");
 
         // Ensure we don't save the aggregate if creating fails halfway
         verify(reservationRepository, never()).save(any());

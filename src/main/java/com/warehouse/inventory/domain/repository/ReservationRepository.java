@@ -1,9 +1,9 @@
 package com.warehouse.inventory.domain.repository;
 
 import com.warehouse.inventory.domain.model.Reservation;
-import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import org.springframework.data.repository.CrudRepository;
 
 import java.util.UUID;
 
-public interface ReservationRepository extends ReactiveCrudRepository<Reservation, UUID> {
+public interface ReservationRepository extends CrudRepository<Reservation, UUID> {
 }

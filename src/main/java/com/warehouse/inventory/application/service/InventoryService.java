@@ -8,7 +8,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 
@@ -44,19 +43,21 @@ public class InventoryService {
      * Must be called outside a transaction; it starts one internally.
      */
     @Transactional
-    public Mono<Void> reserveStock(String sku, int quantity) {
-        return lockService.executeWithLock(
+    public void reserveStock(String sku, int quantity) {
+        lockService.executeWithLock(
                 LOCK_PREFIX + sku, LOCK_LEASE,
-                () -> inventoryRepository.findByProductSkuForUpdate(sku)
-                        .switchIfEmpty(Mono.error(
-                                new InsufficientStockException("No inventory record found for SKU: " + sku)))
-                        .flatMap(inventory -> {
-                            log.debug("Reserving {} units of SKU '{}' (available: {})",
-                                    quantity, sku, inventory.getAvailableStock());
-                            return inventoryRepository.save(inventory.reserve(quantity));
-                        })
-                        .doOnSuccess(i -> log.info("Reserved {} units of SKU '{}'", quantity, sku))
-                        .flatMap(saved -> cacheService.evict(sku))
+                () -> {
+                    com.warehouse.inventory.domain.model.Inventory inventory = inventoryRepository.findByProductSkuForUpdate(sku)
+                            .orElseThrow(() -> new InsufficientStockException("No inventory record found for SKU: " + sku));
+
+                    log.debug("Reserving {} units of SKU '{}' (available: {})", quantity, sku, inventory.getAvailableStock());
+                    
+                    inventoryRepository.save(inventory.reserve(quantity));
+                    log.info("Reserved {} units of SKU '{}'", quantity, sku);
+                    cacheService.evict(sku);
+                    
+                    return null;
+                }
         );
     }
 
@@ -64,34 +65,35 @@ public class InventoryService {
      * Releases {@code quantity} units of {@code sku} back to available stock.
      */
     @Transactional
-    public Mono<Void> releaseStock(String sku, int quantity) {
-        return lockService.executeWithLock(
+    public void releaseStock(String sku, int quantity) {
+        lockService.executeWithLock(
                 LOCK_PREFIX + sku, LOCK_LEASE,
-                () -> inventoryRepository.findByProductSkuForUpdate(sku)
-                        .flatMap(inventory -> {
-                            log.debug("Releasing {} units of SKU '{}'", quantity, sku);
-                            return inventoryRepository.save(inventory.release(quantity));
-                        })
-                        .doOnSuccess(i -> log.info("Released {} units of SKU '{}'", quantity, sku))
-                        .flatMap(saved -> cacheService.evict(sku))
+                () -> {
+                    inventoryRepository.findByProductSkuForUpdate(sku).ifPresent(inventory -> {
+                        log.debug("Releasing {} units of SKU '{}'", quantity, sku);
+                        inventoryRepository.save(inventory.release(quantity));
+                        log.info("Released {} units of SKU '{}'", quantity, sku);
+                        cacheService.evict(sku);
+                    });
+                    return null;
+                }
         );
     }
 
     /**
      * Returns available stock for a SKU, checking the Redis cache first.
-     *
-     * <p>The DB fallback is wrapped in {@code Mono.defer()} so the repository
-     * call is only made when the cache actually misses — not when the pipeline
-     * is assembled. Without defer, the method call happens eagerly, bypassing
-     * the cache-aside short-circuit on a cache hit.
      */
-    public Mono<Integer> getAvailableStock(String sku) {
-        return cacheService.getAvailableStock(sku)
-                .switchIfEmpty(Mono.defer(() ->
-                        inventoryRepository.findByProductSku(sku)
-                                .flatMap(inv -> cacheService
-                                        .setAvailableStock(sku, inv.getAvailableStock())
-                                        .thenReturn(inv.getAvailableStock()))
-                ));
+    public Integer getAvailableStock(String sku) {
+        Integer cached = cacheService.getAvailableStock(sku);
+        if (cached != null) {
+            return cached;
+        }
+
+        com.warehouse.inventory.domain.model.Inventory inv = inventoryRepository.findByProductSku(sku).orElse(null);
+        if (inv != null) {
+            cacheService.setAvailableStock(sku, inv.getAvailableStock());
+            return inv.getAvailableStock();
+        }
+        return 0;
     }
 }

@@ -1,12 +1,12 @@
 package com.warehouse.inventory.domain.repository;
 
 import com.warehouse.inventory.domain.model.ReservationItem;
-import org.springframework.data.repository.reactive.ReactiveCrudRepository;
-import reactor.core.publisher.Flux;
+import org.springframework.data.repository.CrudRepository;
 
+import java.util.List;
 import java.util.UUID;
 
-public interface ReservationItemRepository extends ReactiveCrudRepository<ReservationItem, UUID> {
+public interface ReservationItemRepository extends CrudRepository<ReservationItem, UUID> {
 
-    Flux<ReservationItem> findByReservationId(UUID reservationId);
+    List<ReservationItem> findByReservationId(UUID reservationId);
 }

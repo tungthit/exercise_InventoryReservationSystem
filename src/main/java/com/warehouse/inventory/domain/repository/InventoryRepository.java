@@ -1,13 +1,13 @@
 package com.warehouse.inventory.domain.repository;
 
 import com.warehouse.inventory.domain.model.Inventory;
-import org.springframework.data.r2dbc.repository.Query;
-import org.springframework.data.repository.reactive.ReactiveCrudRepository;
-import reactor.core.publisher.Mono;
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.CrudRepository;
 
+import java.util.Optional;
 import java.util.UUID;
 
-public interface InventoryRepository extends ReactiveCrudRepository<Inventory, UUID> {
+public interface InventoryRepository extends CrudRepository<Inventory, UUID> {
 
     /**
      * Normal read (may be served from cache).
@@ -18,7 +18,7 @@ public interface InventoryRepository extends ReactiveCrudRepository<Inventory, U
             INNER JOIN products p ON i.product_id = p.id
             WHERE p.sku = :sku
             """)
-    Mono<Inventory> findByProductSku(String sku);
+    Optional<Inventory> findByProductSku(String sku);
 
     /**
      * Pessimistic write lock – must be called inside an active transaction.
@@ -32,5 +32,5 @@ public interface InventoryRepository extends ReactiveCrudRepository<Inventory, U
             WHERE p.sku = :sku
             FOR UPDATE
             """)
-    Mono<Inventory> findByProductSkuForUpdate(String sku);
+    Optional<Inventory> findByProductSkuForUpdate(String sku);
 }

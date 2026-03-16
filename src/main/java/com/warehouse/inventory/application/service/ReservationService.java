@@ -21,8 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+
 
 import java.time.Instant;
 import java.util.List;
@@ -55,118 +54,115 @@ public class ReservationService {
     // ─── Create ───────────────────────────────────────────────────────────────
 
     @Transactional
-    public Mono<ReservationResponse> createReservation(CreateReservationRequest request) {
-        return reservationFactory.create(request)
-                // Step 1: reserve stock for all items (fails fast on insufficient stock)
-                .flatMap(aggregate -> reserveAllStock(aggregate).thenReturn(aggregate))
-                // Step 2: persist only after ALL stock reservations succeed
-                // Split into a separate flatMap so persistAggregate() is not called
-                // eagerly as a .then() argument — which would invoke repo.save() before
-                // reserveAllStock even starts.
-                .flatMap(this::persistAggregate)
-                .flatMap(aggregate -> publishAndReturn(
-                        new ReservationCreatedEvent(
-                                aggregate.reservation().getId(),
-                                aggregate.reservation().getOrderId()),
-                        aggregate));
+    public ReservationResponse createReservation(CreateReservationRequest request) {
+        ReservationAggregate aggregate = reservationFactory.create(request);
+
+        // Step 1: reserve stock for all items (fails fast on insufficient stock)
+        reserveAllStock(aggregate);
+
+        // Step 2: persist only after ALL stock reservations succeed
+        ReservationAggregate savedAggregate = persistAggregate(aggregate);
+
+        return publishAndReturn(
+                new ReservationCreatedEvent(
+                        savedAggregate.reservation().getId(),
+                        savedAggregate.reservation().getOrderId()),
+                savedAggregate);
     }
 
     // ─── Confirm ──────────────────────────────────────────────────────────────
 
     @Transactional
-    public Mono<ReservationResponse> confirmReservation(UUID id) {
-        return reservationRepository.findById(id)
-                .switchIfEmpty(Mono.error(new ReservationNotFoundException(id)))
-                .flatMap(reservation -> {
-                    Reservation confirmed = stateMachine.confirm(reservation);
-                    
-                    return reservationItemRepository.findByReservationId(id)
-                            .collectList()
-                            .flatMap(items -> {
-                                if (reservation == confirmed) {
-                                    // Idempotent: already confirmed. Return current state.
-                                    return Mono.just(toResponse(new ReservationAggregate(reservation, items)));
-                                }
-                                
-                                return reservationRepository.save(confirmed)
-                                        .flatMap(saved -> publishAndReturn(
-                                                new ReservationConfirmedEvent(saved.getId(), saved.getOrderId()),
-                                                new ReservationAggregate(saved, items)));
-                            });
-                });
+    public ReservationResponse confirmReservation(UUID id) {
+        Reservation reservation = reservationRepository.findById(id)
+                .orElseThrow(() -> new ReservationNotFoundException(id));
+
+        Reservation confirmed = stateMachine.confirm(reservation);
+        List<ReservationItem> items = reservationItemRepository.findByReservationId(id);
+
+        if (reservation == confirmed) {
+            // Idempotent: already confirmed. Return current state.
+            return toResponse(new ReservationAggregate(reservation, items));
+        }
+        
+        Reservation saved = reservationRepository.save(confirmed);
+        return publishAndReturn(
+                new ReservationConfirmedEvent(saved.getId(), saved.getOrderId()),
+                new ReservationAggregate(saved, items));
     }
 
     // ─── Cancel ───────────────────────────────────────────────────────────────
 
     @Transactional
-    public Mono<ReservationResponse> cancelReservation(UUID id) {
-        return reservationRepository.findById(id)
-                .switchIfEmpty(Mono.error(new ReservationNotFoundException(id)))
-                .flatMap(reservation ->
-                        reservationItemRepository.findByReservationId(id)
-                                .collectList()
-                                .flatMap(items -> {
-                                    Reservation cancelled = stateMachine.cancel(reservation);
-                                    
-                                    if (reservation == cancelled) {
-                                        // Idempotent: already cancelled. Return current state.
-                                        return Mono.just(toResponse(new ReservationAggregate(reservation, items)));
-                                    }
-                                    
-                                    return releaseAllStock(items)
-                                            .then(reservationRepository.save(cancelled))
-                                            .flatMap(saved -> publishAndReturn(
-                                                    new ReservationCancelledEvent(saved.getId(), saved.getOrderId()),
-                                                    new ReservationAggregate(saved, items)));
-                                }));
+    public ReservationResponse cancelReservation(UUID id) {
+        Reservation reservation = reservationRepository.findById(id)
+                .orElseThrow(() -> new ReservationNotFoundException(id));
+
+        List<ReservationItem> items = reservationItemRepository.findByReservationId(id);
+        Reservation cancelled = stateMachine.cancel(reservation);
+        
+        if (reservation == cancelled) {
+            // Idempotent: already cancelled. Return current state.
+            return toResponse(new ReservationAggregate(reservation, items));
+        }
+        
+        releaseAllStock(items);
+        Reservation saved = reservationRepository.save(cancelled);
+
+        return publishAndReturn(
+                new ReservationCancelledEvent(saved.getId(), saved.getOrderId()),
+                new ReservationAggregate(saved, items));
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
 
-    /** Reserves stock for every line item sequentially (maintains order guarantees). */
-    private Mono<Void> reserveAllStock(ReservationAggregate aggregate) {
-        return Flux.fromIterable(aggregate.items())
-                .concatMap(item -> inventoryService.reserveStock(item.getSku(), item.getQuantity()))
-                .then();
+    /** Reserves stock for every line item sequentially. */
+    private void reserveAllStock(ReservationAggregate aggregate) {
+        for (ReservationItem item : aggregate.items()) {
+            inventoryService.reserveStock(item.getSku(), item.getQuantity());
+        }
     }
 
     /** Releases stock for every line item sequentially on cancellation. */
-    private Mono<Void> releaseAllStock(List<ReservationItem> items) {
-        return Flux.fromIterable(items)
-                .concatMap(item -> inventoryService.releaseStock(item.getSku(), item.getQuantity()))
-                .then();
+    private void releaseAllStock(List<ReservationItem> items) {
+        for (ReservationItem item : items) {
+            inventoryService.releaseStock(item.getSku(), item.getQuantity());
+        }
     }
 
     /** Persists header + items, returns aggregate with persisted IDs. */
-    private Mono<ReservationAggregate> persistAggregate(ReservationAggregate aggregate) {
-        return reservationRepository.save(aggregate.reservation())
-                .flatMap(savedReservation ->
-                        Flux.fromIterable(aggregate.items())
-                                .map(item -> item.toBuilder()
-                                        .reservationId(savedReservation.getId())
-                                        .build())
-                                .flatMap(reservationItemRepository::save)
-                                .collectList()
-                                .map(savedItems -> new ReservationAggregate(savedReservation, savedItems)));
+    private ReservationAggregate persistAggregate(ReservationAggregate aggregate) {
+        Reservation savedReservation = reservationRepository.save(aggregate.reservation());
+
+        List<ReservationItem> savedItems = aggregate.items().stream()
+                .map(item -> item.toBuilder()
+                        .reservationId(savedReservation.getId())
+                        .build())
+                .map(reservationItemRepository::save)
+                .toList();
+
+        return new ReservationAggregate(savedReservation, savedItems);
     }
 
     /** Publishes event via Outbox Pattern (saved in the same DB transaction) and maps to response. */
     private <E extends com.warehouse.inventory.domain.event.DomainEvent>
-    Mono<ReservationResponse> publishAndReturn(E domainEvent, ReservationAggregate aggregate) {
-        return Mono.fromCallable(() -> objectMapper.writeValueAsString(domainEvent))
-                .flatMap(payload -> {
-                    OutboxEvent outboxEvent = OutboxEvent.builder()
-                            .aggregateType("RESERVATION")
-                            .aggregateId(aggregate.reservation().getId().toString())
-                            .type(domainEvent.getEventType())
-                            .payload(payload)
-                            .createdAt(Instant.now())
-                            .isNew(true)
-                            .build();
-                    return outboxEventRepository.save(outboxEvent);
-                })
-                .doOnError(err -> log.error("Failed to save outbox event {}: {}", domainEvent.getEventType(), err.getMessage()))
-                .thenReturn(toResponse(aggregate));
+    ReservationResponse publishAndReturn(E domainEvent, ReservationAggregate aggregate) {
+        try {
+            String payload = objectMapper.writeValueAsString(domainEvent);
+            OutboxEvent outboxEvent = OutboxEvent.builder()
+                    .id(UUID.randomUUID())
+                    .aggregateType("RESERVATION")
+                    .aggregateId(aggregate.reservation().getId().toString())
+                    .type(domainEvent.getEventType())
+                    .payload(payload)
+                    .createdAt(Instant.now())
+                    .isNew(true)
+                    .build();
+            outboxEventRepository.save(outboxEvent);
+        } catch (Exception err) {
+            log.error("Failed to save outbox event {}: {}", domainEvent.getEventType(), err.getMessage());
+        }
+        return toResponse(aggregate);
     }
 
     private ReservationResponse toResponse(ReservationAggregate aggregate) {

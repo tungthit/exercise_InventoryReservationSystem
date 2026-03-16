@@ -11,8 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
+
 
 import java.time.Duration;
 import java.util.UUID;
@@ -49,7 +48,7 @@ class InventoryServiceTest {
     private void passThrough() {
         when(lockService.executeWithLock(anyString(), any(Duration.class), any()))
                 .thenAnswer(inv -> {
-                    Supplier<Mono<?>> op = inv.getArgument(2);
+                    Supplier<?> op = inv.getArgument(2);
                     return op.get();
                 });
     }
@@ -61,12 +60,10 @@ class InventoryServiceTest {
         Inventory inv = inventoryOf(100, 0);
         Inventory updated = inv.reserve(30);
 
-        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(Mono.just(inv));
-        when(inventoryRepository.save(any())).thenReturn(Mono.just(updated));
-        when(cacheService.evict("A100")).thenReturn(Mono.empty());
+        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(java.util.Optional.of(inv));
+        when(inventoryRepository.save(any())).thenReturn(updated);
 
-        StepVerifier.create(inventoryService.reserveStock("A100", 30))
-                .verifyComplete();
+        inventoryService.reserveStock("A100", 30);
 
         verify(inventoryRepository).save(argThat(i -> i.getReservedStock() == 30));
         verify(cacheService).evict("A100");
@@ -78,11 +75,11 @@ class InventoryServiceTest {
         passThrough();
         Inventory inv = inventoryOf(100, 80);  // only 20 available
 
-        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(Mono.just(inv));
+        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(java.util.Optional.of(inv));
 
-        StepVerifier.create(inventoryService.reserveStock("A100", 50))
-                .expectError(InsufficientStockException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(InsufficientStockException.class, () ->
+            inventoryService.reserveStock("A100", 50)
+        );
 
         verify(inventoryRepository, never()).save(any());
     }
@@ -94,12 +91,10 @@ class InventoryServiceTest {
         Inventory inv = inventoryOf(100, 50);
         Inventory updated = inv.release(20);
 
-        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(Mono.just(inv));
-        when(inventoryRepository.save(any())).thenReturn(Mono.just(updated));
-        when(cacheService.evict("A100")).thenReturn(Mono.empty());
+        when(inventoryRepository.findByProductSkuForUpdate("A100")).thenReturn(java.util.Optional.of(inv));
+        when(inventoryRepository.save(any())).thenReturn(updated);
 
-        StepVerifier.create(inventoryService.releaseStock("A100", 20))
-                .verifyComplete();
+        inventoryService.releaseStock("A100", 20);
 
         verify(inventoryRepository).save(argThat(i -> i.getReservedStock() == 30));
     }
@@ -107,11 +102,10 @@ class InventoryServiceTest {
     @Test
     @DisplayName("getAvailableStock returns cached value when cache hits")
     void getAvailableStock_cacheHit() {
-        when(cacheService.getAvailableStock("A100")).thenReturn(Mono.just(70));
+        when(cacheService.getAvailableStock("A100")).thenReturn(70);
 
-        StepVerifier.create(inventoryService.getAvailableStock("A100"))
-                .assertNext(stock -> assertThat(stock).isEqualTo(70))
-                .verifyComplete();
+        Integer stock = inventoryService.getAvailableStock("A100");
+        assertThat(stock).isEqualTo(70);
 
         verifyNoInteractions(inventoryRepository);
     }
@@ -120,34 +114,32 @@ class InventoryServiceTest {
     @DisplayName("getAvailableStock falls through to DB on cache miss")
     void getAvailableStock_cacheMiss() {
         Inventory inv = inventoryOf(100, 30);
-        when(cacheService.getAvailableStock("A100")).thenReturn(Mono.empty());
-        when(inventoryRepository.findByProductSku("A100")).thenReturn(Mono.just(inv));
-        when(cacheService.setAvailableStock(eq("A100"), eq(70))).thenReturn(Mono.empty());
+        when(cacheService.getAvailableStock("A100")).thenReturn(null);
+        when(inventoryRepository.findByProductSku("A100")).thenReturn(java.util.Optional.of(inv));
 
-        StepVerifier.create(inventoryService.getAvailableStock("A100"))
-                .assertNext(stock -> assertThat(stock).isEqualTo(70))
-                .verifyComplete();
+        Integer stock = inventoryService.getAvailableStock("A100");
+        assertThat(stock).isEqualTo(70);
     }
 
     @Test
-    @DisplayName("getAvailableStock returns empty when SKU does not exist")
+    @DisplayName("getAvailableStock returns 0 when SKU does not exist")
     void getAvailableStock_notFound() {
-        when(cacheService.getAvailableStock("UNKNOWN")).thenReturn(Mono.empty());
-        when(inventoryRepository.findByProductSku("UNKNOWN")).thenReturn(Mono.empty());
+        when(cacheService.getAvailableStock("UNKNOWN")).thenReturn(null);
+        when(inventoryRepository.findByProductSku("UNKNOWN")).thenReturn(java.util.Optional.empty());
 
-        StepVerifier.create(inventoryService.getAvailableStock("UNKNOWN"))
-                .verifyComplete(); // returns Mono.empty()
+        Integer stock = inventoryService.getAvailableStock("UNKNOWN");
+        assertThat(stock).isEqualTo(0);
     }
 
     @Test
     @DisplayName("reserveStock fails fast when distributed lock cannot be acquired")
     void reserveStock_lockFailure() {
         when(lockService.executeWithLock(eq("inventory:lock:A100"), any(), any()))
-                .thenReturn(Mono.error(new com.warehouse.inventory.infrastructure.lock.LockAcquisitionException("Lock failed")));
+                .thenThrow(new com.warehouse.inventory.infrastructure.lock.LockAcquisitionException("Lock failed"));
 
-        StepVerifier.create(inventoryService.reserveStock("A100", 10))
-                .expectError(com.warehouse.inventory.infrastructure.lock.LockAcquisitionException.class)
-                .verify();
+        org.junit.jupiter.api.Assertions.assertThrows(com.warehouse.inventory.infrastructure.lock.LockAcquisitionException.class, () ->
+            inventoryService.reserveStock("A100", 10)
+        );
 
         verifyNoInteractions(inventoryRepository);
         verifyNoInteractions(cacheService);

@@ -1,23 +1,17 @@
 spring:
   application:
     name: inventory-reservation
+  
+  threads:
+    virtual:
+      enabled: true
 
-  # ── JDBC DataSource (Flyway only) ──────────────────────────────────────────
+  # ── JDBC DataSource ──────────────────────────────────────────
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:inventory_db}
     username: ${DB_USER:postgres}
     password: ${DB_PASS:postgres}
     driver-class-name: org.postgresql.Driver
-
-  # ── R2DBC (reactive app) ───────────────────────────────────────────────────
-  r2dbc:
-    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:inventory_db}
-    username: ${DB_USER:postgres}
-    password: ${DB_PASS:postgres}
-    pool:
-      initial-size: 5
-      max-size: 20
-      max-idle-time: 30m
 
   # ── Flyway ─────────────────────────────────────────────────────────────────
   flyway:
@@ -34,15 +28,10 @@ spring:
       connect-timeout: 3s
       timeout: 3s
 
-  # ── WebFlux / Netty ────────────────────────────────────────────────────────
-  webflux:
-    base-path: /api
-
 server:
   port: ${SERVER_PORT:8080}
-  netty:
-    connection-timeout: 10s
-    idle-timeout: 60s
+  servlet:
+    context-path: /api
 
 # ── NATS ───────────────────────────────────────────────────────────────────
 nats:
@@ -72,4 +61,3 @@ management:
 logging:
   level:
     com.warehouse: DEBUG
-    org.springframework.r2dbc: DEBUG

@@ -8,15 +8,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Mono;
+
 
 import java.util.UUID;
 
 /**
  * Reservation REST API.
  *
- * <p>All methods return {@link Mono} so Netty never blocks a thread
- * waiting for DB or messaging I/O.
+ * <p>All methods return standard sync types. Spring Boot with Virtual Threads
+ * executes them safely without blocking native OS threads.
  */
 @Slf4j
 @RestController
@@ -34,7 +34,7 @@ public class ReservationController {
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Mono<ReservationResponse> createReservation(
+    public ReservationResponse createReservation(
             @Valid @RequestBody CreateReservationRequest request) {
         log.info("Creating reservation for orderId={}", request.orderId());
         return reservationService.createReservation(request);
@@ -46,7 +46,7 @@ public class ReservationController {
      * <pre>POST /api/reservations/{id}/confirm</pre>
      */
     @PostMapping("/{id}/confirm")
-    public Mono<ReservationResponse> confirmReservation(@PathVariable UUID id) {
+    public ReservationResponse confirmReservation(@PathVariable UUID id) {
         log.info("Confirming reservation id={}", id);
         return reservationService.confirmReservation(id);
     }
@@ -57,7 +57,7 @@ public class ReservationController {
      * <pre>POST /api/reservations/{id}/cancel</pre>
      */
     @PostMapping("/{id}/cancel")
-    public Mono<ReservationResponse> cancelReservation(@PathVariable UUID id) {
+    public ReservationResponse cancelReservation(@PathVariable UUID id) {
         log.info("Cancelling reservation id={}", id);
         return reservationService.cancelReservation(id);
     }

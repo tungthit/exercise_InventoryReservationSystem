@@ -2,9 +2,8 @@ package com.warehouse.inventory.infrastructure.cache;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
+
 
 import java.time.Duration;
 
@@ -23,27 +22,36 @@ public class RedisInventoryCacheService {
     private static final String   KEY_PREFIX = "inventory:available:";
     private static final Duration TTL        = Duration.ofMinutes(5);
 
-    private final ReactiveStringRedisTemplate redisTemplate;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
 
-    public Mono<Integer> getAvailableStock(String sku) {
-        return redisTemplate.opsForValue()
-                .get(KEY_PREFIX + sku)
-                .map(Integer::parseInt)
-                .doOnNext(v -> log.debug("Cache HIT for SKU '{}': {}", sku, v))
-                .doOnError(e -> log.warn("Cache GET error for SKU '{}': {}", sku, e.getMessage()))
-                .onErrorResume(e -> Mono.empty());
+    public Integer getAvailableStock(String sku) {
+        try {
+            String value = redisTemplate.opsForValue().get(KEY_PREFIX + sku);
+            if (value != null) {
+                log.debug("Cache HIT for SKU '{}': {}", sku, value);
+                return Integer.parseInt(value);
+            }
+        } catch (Exception e) {
+            log.warn("Cache GET error for SKU '{}': {}", sku, e.getMessage());
+        }
+        return null;
     }
 
-    public Mono<Void> setAvailableStock(String sku, int availableStock) {
-        return redisTemplate.opsForValue()
-                .set(KEY_PREFIX + sku, String.valueOf(availableStock), TTL)
-                .doOnSuccess(b -> log.debug("Cache SET for SKU '{}': {}", sku, availableStock))
-                .then();
+    public void setAvailableStock(String sku, int availableStock) {
+        try {
+            redisTemplate.opsForValue().set(KEY_PREFIX + sku, String.valueOf(availableStock), TTL);
+            log.debug("Cache SET for SKU '{}': {}", sku, availableStock);
+        } catch (Exception e) {
+            log.warn("Cache SET error for SKU '{}': {}", sku, e.getMessage());
+        }
     }
 
-    public Mono<Void> evict(String sku) {
-        return redisTemplate.delete(KEY_PREFIX + sku)
-                .doOnSuccess(deleted -> log.debug("Cache EVICT for SKU '{}', removed={}", sku, deleted))
-                .then();
+    public void evict(String sku) {
+        try {
+            Boolean deleted = redisTemplate.delete(KEY_PREFIX + sku);
+            log.debug("Cache EVICT for SKU '{}', removed={}", sku, deleted);
+        } catch (Exception e) {
+            log.warn("Cache EVICT error for SKU '{}': {}", sku, e.getMessage());
+        }
     }
 }

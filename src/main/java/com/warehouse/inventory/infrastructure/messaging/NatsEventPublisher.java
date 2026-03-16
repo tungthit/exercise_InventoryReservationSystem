@@ -9,8 +9,7 @@ import io.nats.client.impl.NatsMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+
 
 /**
  * NATS JetStream implementation of {@link EventPublisher}.
@@ -31,21 +30,21 @@ public class NatsEventPublisher implements EventPublisher {
     private final ObjectMapper objectMapper;
 
     @Override
-    public <T extends DomainEvent> Mono<Void> publish(T event) {
-        return Mono.fromCallable(() -> {
-                    String subject = "reservations." + event.getEventType().toLowerCase();
-                    byte[] data    = objectMapper.writeValueAsBytes(event);
+    public <T extends DomainEvent> void publish(T event) {
+        try {
+            String subject = "reservations." + event.getEventType().toLowerCase();
+            byte[] data    = objectMapper.writeValueAsBytes(event);
 
-                    Message message = NatsMessage.builder()
-                            .subject(subject)
-                            .data(data)
-                            .build();
+            Message message = NatsMessage.builder()
+                    .subject(subject)
+                    .data(data)
+                    .build();
 
-                    jetStream.publish(message);    // blocks briefly for PubAck
-                    log.info("Published event '{}' to NATS subject '{}'", event.getEventType(), subject);
-                    return (Void) null;
-                })
-                .subscribeOn(Schedulers.boundedElastic())
-                .then();
+            jetStream.publish(message);    // blocks briefly for PubAck
+            log.info("Published event '{}' to NATS subject '{}'", event.getEventType(), subject);
+        } catch (Exception e) {
+            log.error("Failed to publish event '{}' to NATS", event.getEventType(), e);
+            throw new RuntimeException("Failed to publish event to NATS", e);
+        }
     }
 }
