@@ -100,3 +100,45 @@ mvn -Dtest=InventoryServiceTest test
 mvn -Dtest=ReservationServiceTest test
 mvn -Dtest=InventoryTest test
 ```
+
+---
+
+## 4. Stress Testing (Load Testing)
+
+To prove the concurrency locks (Redisson + R2DBC) work under extreme pressure, we simulate a **"Flash Sale"** where hundreds of users attempt to buy the exact same SKU at the exact same millisecond.
+
+A ready-to-use **Apache JMeter** script is included in the repository: `flash-sale-load-test.jmx`.
+
+### Running the JMeter Test:
+1. Ensure the application and Docker containers are running.
+2. Ensure SKU `A100` has its default seeded stock (100 units). If you've already depleted it, restart the database container to re-seed Flyway: `docker compose down -v && docker compose up -d`.
+3. Open **Apache JMeter 5.6+**.
+4. Click `File -> Open` and select `flash-sale-load-test.jmx`.
+5. The test is configured for **500 concurrent threads** looping twice (1000 total requests) against `POST /api/reservations`.
+6. Click the Green "Start" button.
+
+**Expected Results:**
+- Exactly **100** requests will succeed with `201 Created`.
+- Exactly **900** requests will fail gracefully with `409 Conflict` (Insufficient Stock or Lock Conflict).
+- The PostgreSQL database will show exactly `0` available stock, with no overselling.
+
+*Alternative: If you prefer **k6**, you can write a similar script that fires `http.post` with `{"sku": "A100", "quantity": 1}` using 500 VUs.*
+
+---
+
+## 5. Penetration Testing (Security)
+
+When penetration testing this application (using tools like OWASP ZAP or Burp Suite), focus on validating these business logic and security boundaries:
+
+1. **Negative Quantity Exploits:**
+   - **Attack:** Send `{"sku": "A100", "quantity": -50}` to try and artificially inflate stock.
+   - **Defense:** The API immediately rejects this with `400 Bad Request` (`@Min(1)` validation).
+2. **SQL Injection (SQLi):**
+   - **Attack:** Pass DROP TABLE commands in the `orderId` JSON field.
+   - **Defense:** Impossible. Spring Data R2DBC uses parameterized binds exclusively; no raw query concatenation is occurring.
+3. **Lock Starvation (DoS):**
+   - **Attack:** Flood the API with requests for random, non-existent SKUs to exhaust the Redis lock pool.
+   - **Defense:** Redisson is configured with a `lock-watchdog-timeout-ms` (30s) to automatically purge abandoned locks. (In production, an API Gateway should rate-limit these IPs).
+4. **Idempotency Replay Attacks:**
+   - **Attack:** Capture a successful `POST /api/reservations/{id}/confirm` request and replay it 100 times to break state.
+   - **Defense:** The `ReservationStateMachine` uses the State Pattern to instantly throw a 400 `InvalidStateTransitionException` if the reservation is already CONFIRMED.
