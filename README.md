@@ -144,8 +144,8 @@ kubectl scale deployment inventory-reservation --replicas=3
 This application exposes monitoring endpoints to track performance, health, and message broker status.
 
 ### Spring Boot Actuator
-- **Health Check**: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
-- **Application Metrics**: [http://localhost:8080/actuator/metrics](http://localhost:8080/actuator/metrics)
+- **Health Check**: [http://localhost:8080/api/actuator/health](http://localhost:8080/api/actuator/health)
+- **Application Metrics**: [http://localhost:8080/api/actuator/metrics](http://localhost:8080/api/actuator/metrics)
 
 ### NATS JetStream Dashboard
 The NATS monitoring server is exposed locally to inspect broker statistics and connections:
