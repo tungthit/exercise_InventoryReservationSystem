@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: inventory-reservation
+
+  # ── JDBC DataSource (Flyway only) ──────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:inventory_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  # ── R2DBC (reactive app) ───────────────────────────────────────────────────
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:inventory_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:postgres}
+    pool:
+      initial-size: 5
+      max-size: 20
+      max-idle-time: 30m
+
+  # ── Flyway ─────────────────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: 3s
+      timeout: 3s
+
+  # ── WebFlux / Netty ────────────────────────────────────────────────────────
+  webflux:
+    base-path: /api
+
+server:
+  port: ${SERVER_PORT:8080}
+  netty:
+    connection-timeout: 10s
+    idle-timeout: 60s
+
+# ── NATS ───────────────────────────────────────────────────────────────────
+nats:
+  url: ${NATS_URL:nats://localhost:4222}
+  reconnect-wait-ms: 1000
+  max-reconnects: -1          # infinite
+  connection-timeout-ms: 5000
+
+# ── Redisson ───────────────────────────────────────────────────────────────
+redisson:
+  address: redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}
+  connection-pool-size: 64
+  connection-minimum-idle-size: 8
+  lock-watchdog-timeout-ms: 30000
+
+# ── Actuator ───────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# ── Logging ────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.warehouse: DEBUG
+    org.springframework.r2dbc: DEBUG
