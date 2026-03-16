@@ -1,6 +1,81 @@
 # Warehouse Inventory Reservation System
 
-A production-grade, high-concurrency inventory reservation service built with **Java 21**, **Spring WebFlux (Netty)**, **NATS JetStream**, **Redis**, and **PostgreSQL**.
+High-concurrency inventory reservation service built with **Java 21**, **Spring WebFlux (Netty)**, **NATS JetStream**, **Redis**, and **PostgreSQL**.
+
+---
+
+## How to Run Locally
+
+### 1. Prerequisites (What you need installed)
+
+Before running the application, ensure your system has the following installed:
+
+1. **Java 21 JDK**: Required to compile and run the Spring Boot application. [Download Java 21](https://www.oracle.com/java/technologies/downloads/#java21)
+2. **Maven 3.9+**: Required to build the project and run tests. [Download Maven](https://maven.apache.org/download.cgi)
+3. **Docker Desktop**: Required to spin up the localized infrastructure (PostgreSQL, Redis, NATS). [Download Docker](https://www.docker.com/products/docker-desktop/)
+
+### 2. Start the Infrastructure
+
+Open a terminal in the root directory (where `docker-compose.yml` is located) and start the required services in the background:
+
+```bash
+docker compose up -d
+```
+
+This will spin up:
+- **PostgreSQL 16** on port `:5432` (Relational database for storing reservations and inventory)
+- **Redis 7** on port `:6379` (Distributed locking and caching)
+- **NATS 2.10 (JetStream)** on port `:4222` (Event broker for domain events)
+
+*(Note: The first time you run this, Docker will download the images which may take a minute).*
+
+### 3. Start the Application
+
+Once the Docker containers are running happily, boot up the Spring application using Maven:
+
+```bash
+mvn spring-boot:run
+```
+
+The application will automatically:
+1. Connect to PostgreSQL, Redis, and NATS.
+2. Run **Flyway** migration scripts to automatically create tables.
+3. Seed the database with sample inventory (SKUs `A100`, `B200`, `C300`).
+4. Start the Netty web server on `http://localhost:8080`.
+
+### 4. Smoke Test the API
+
+You can use Postman or `curl` to test the API. Note the `api` prefix in the URL.
+
+```bash
+# 1. Create a new reservation 
+curl -X POST http://localhost:8080/api/reservations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "orderId": "ORD-1001",
+    "items": [
+      {"sku": "A100", "quantity": 5},
+      {"sku": "B200", "quantity": 10}
+    ]
+  }'
+
+# The terminal will output JSON containing the new Reservation ID. Copy it for the next steps!
+```
+
+```bash
+# Note the returned `id`, then:
+
+# Confirm
+curl -X POST http://localhost:8080/api/reservations/{id}/confirm
+
+# Cancel (releases stock)
+curl -X POST http://localhost:8080/api/reservations/{id}/cancel
+
+# Try to oversell (returns 409 CONFLICT)
+curl -X POST http://localhost:8080/api/reservations \
+  -H "Content-Type: application/json" \
+  -d '{"orderId":"ORD-OVERSELL","items":[{"sku":"A100","quantity":9999}]}'
+```
 
 ---
 
@@ -79,6 +154,14 @@ com.warehouse.inventory
 | AOT            | `RuntimeHintsRegistrar` (GraalVM-ready)|
 | Tests          | JUnit 5, Mockito, StepVerifier        |
 
+### Why we chose these technologies for this use-case:
+
+- **Java 21**: Offers Virtual Threads capability (though we opted for raw Reactive Streams here for maximum raw throughput), excellent pattern matching, and record types which perfectly suit Domain-Driven Design aggregates.
+- **Spring WebFlux (Netty)**: Inventory reservation is a highly I/O bound process (waiting on database locks, Redis locks, and message brokers). A non-blocking Netty server means we don't block an OS thread for every concurrent HTTP request, allowing us to handle thousands of concurrent requests on minimal compute resources.
+- **PostgreSQL + R2DBC**: Relational databases are critical for inventory because we absolutely need ACID compliance and `SELECT ... FOR UPDATE` row-level locking to prevent overselling. R2DBC provides a reactive, non-blocking driver to PostgreSQL to match Netty's architecture.
+- **Redis (Redisson)**: We use this as a first-line-of-defense distributed lock. Instead of sending 100 concurrent requests to hammer the database row, Redisson queues or fast-fails them at the cache layer, keeping the database healthy under spike loads (e.g. Flash Sales).
+- **NATS JetStream**: Standard NATS is fire-and-forget. JetStream provides lightweight, persistent, at-least-once message delivery. When a reservation drops, a downstream service (like fulfillment or notification) is guaranteed to receive the event even if they are temporarily offline.
+
 ---
 
 ## Concurrency Strategy
@@ -94,64 +177,7 @@ Replica A  ──► Redis LOCK "A100" ──► DB FOR UPDATE ──► save �
 Replica B  ──► Redis LOCK "A100"  (waits)           ──► DB FOR UPDATE ...
 ```
 
----
 
-## Prerequisites
-
-- **Docker Desktop** (for local infra)
-- **Java 21 JDK**
-- **Maven 3.9+**
-
----
-
-## Quick Start
-
-### 1. Start Infrastructure
-
-```bash
-docker-compose up -d
-```
-
-This starts:
-- PostgreSQL on `:5432`
-- Redis on `:6379`
-- NATS (with JetStream) on `:4222` / monitoring `:8222`
-
-### 2. Run the Application
-
-```bash
-mvn spring-boot:run
-```
-
-Flyway will automatically apply migrations and seed sample data.
-
-### 3. Smoke Test the API
-
-```bash
-# Create a reservation (SKUs A100, B200, C300 are seeded)
-curl -X POST http://localhost:8080/api/reservations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "orderId": "ORD-1001",
-    "items": [
-      {"sku": "A100", "quantity": 5},
-      {"sku": "B200", "quantity": 10}
-    ]
-  }'
-
-# Note the returned `id`, then:
-
-# Confirm
-curl -X POST http://localhost:8080/api/reservations/{id}/confirm
-
-# Cancel (releases stock)
-curl -X POST http://localhost:8080/api/reservations/{id}/cancel
-
-# Try to oversell (returns 409 CONFLICT)
-curl -X POST http://localhost:8080/api/reservations \
-  -H "Content-Type: application/json" \
-  -d '{"orderId":"ORD-OVERSELL","items":[{"sku":"A100","quantity":9999}]}'
-```
 
 ---
 
