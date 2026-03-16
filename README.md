@@ -43,39 +43,28 @@ The application will automatically:
 3. Seed the database with sample inventory (SKUs `A100`, `B200`, `C300`).
 4. Start the Netty web server on `http://localhost:8080`.
 
-### 4. Smoke Test the API
+## Tech Stack
 
-You can use Postman or `curl` to test the API. Note the `api` prefix in the URL.
+| Concern        | Technology                            |
+|----------------|---------------------------------------|
+| Server         | **Netty** (via Spring WebFlux)        |
+| Language       | **Java 21**                           |
+| Framework      | Spring Boot 3.3 (reactive/WebFlux)    |
+| Database       | PostgreSQL 16 + **R2DBC** (reactive)  |
+| Migrations     | Flyway (JDBC)                         |
+| Cache          | Redis 7 + Lettuce (reactive)          |
+| Dist. Lock     | **Redisson** per-SKU locks            |
+| Message Broker | **NATS JetStream** (at-least-once)    |
+| AOT            | `RuntimeHintsRegistrar` (GraalVM-ready)|
+| Tests          | JUnit 5, Mockito, StepVerifier        |
 
-```bash
-# 1. Create a new reservation 
-curl -X POST http://localhost:8080/api/reservations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "orderId": "ORD-1001",
-    "items": [
-      {"sku": "A100", "quantity": 5},
-      {"sku": "B200", "quantity": 10}
-    ]
-  }'
+### Why we chose these technologies for this use-case:
 
-# The terminal will output JSON containing the new Reservation ID. Copy it for the next steps!
-```
-
-```bash
-# Note the returned `id`, then:
-
-# Confirm
-curl -X POST http://localhost:8080/api/reservations/{id}/confirm
-
-# Cancel (releases stock)
-curl -X POST http://localhost:8080/api/reservations/{id}/cancel
-
-# Try to oversell (returns 409 CONFLICT)
-curl -X POST http://localhost:8080/api/reservations \
-  -H "Content-Type: application/json" \
-  -d '{"orderId":"ORD-OVERSELL","items":[{"sku":"A100","quantity":9999}]}'
-```
+- **Java 21**: Offers Virtual Threads capability (though we opted for raw Reactive Streams here for maximum raw throughput), excellent pattern matching, and record types which perfectly suit Domain-Driven Design aggregates.
+- **Spring WebFlux (Netty)**: Inventory reservation is a highly I/O bound process (waiting on database locks, Redis locks, and message brokers). A non-blocking Netty server means we don't block an OS thread for every concurrent HTTP request, allowing us to handle thousands of concurrent requests on minimal compute resources.
+- **PostgreSQL + R2DBC**: Relational databases are critical for inventory because we absolutely need ACID compliance and `SELECT ... FOR UPDATE` row-level locking to prevent overselling. R2DBC provides a reactive, non-blocking driver to PostgreSQL to match Netty's architecture.
+- **Redis (Redisson)**: We use this as a first-line-of-defense distributed lock. Instead of sending 100 concurrent requests to hammer the database row, Redisson queues or fast-fails them at the cache layer, keeping the database healthy under spike loads (e.g. Flash Sales).
+- **NATS JetStream**: Standard NATS is fire-and-forget. JetStream provides lightweight, persistent, at-least-once message delivery. When a reservation drops, a downstream service (like fulfillment or notification) is guaranteed to receive the event even if they are temporarily offline.
 
 ---
 
@@ -104,64 +93,6 @@ curl -X POST http://localhost:8080/api/reservations \
 └────────────────┘  └─────────────────────────────┘
 ```
 
-### Package Structure
-
-```
-com.warehouse.inventory
-├── api/                    ← Controllers, DTOs, ExceptionHandler
-├── application/            ← Use-case services, Factory
-│   ├── factory/            (Factory Pattern)
-│   └── service/
-├── domain/                 ← Entities, State Pattern, Events, Ports
-│   ├── exception/
-│   ├── event/
-│   ├── model/
-│   ├── port/
-│   ├── repository/
-│   └── state/              (State Pattern)
-├── infrastructure/         ← Redis cache, Redisson lock, NATS publisher
-│   ├── cache/
-│   ├── lock/
-│   └── messaging/
-└── config/                 ← DatabaseConfig, NatsConfig, RedisConfig, AotRuntimeHints
-```
-
----
-
-## Design Patterns
-
-| Pattern      | Location                                 | Purpose                                                    |
-|--------------|------------------------------------------|------------------------------------------------------------|
-| **Factory**  | `application/factory/ReservationFactory` | Validates SKUs, builds `ReservationAggregate`; isolates create logic |
-| **State**    | `domain/state/ReservationStateMachine`   | PENDING→CONFIRMED or CANCELLED; terminal states throw     |
-| **Observer** | `infrastructure/messaging/NatsEventPublisher` | Domain events published to NATS decoupled from core logic |
-| **Strategy** | `domain/port/LockService`                | Swappable locking strategy (Redisson implementation)      |
-
----
-
-## Tech Stack
-
-| Concern        | Technology                            |
-|----------------|---------------------------------------|
-| Server         | **Netty** (via Spring WebFlux)        |
-| Language       | **Java 21**                           |
-| Framework      | Spring Boot 3.3 (reactive/WebFlux)    |
-| Database       | PostgreSQL 16 + **R2DBC** (reactive)  |
-| Migrations     | Flyway (JDBC)                         |
-| Cache          | Redis 7 + Lettuce (reactive)          |
-| Dist. Lock     | **Redisson** per-SKU locks            |
-| Message Broker | **NATS JetStream** (at-least-once)    |
-| AOT            | `RuntimeHintsRegistrar` (GraalVM-ready)|
-| Tests          | JUnit 5, Mockito, StepVerifier        |
-
-### Why we chose these technologies for this use-case:
-
-- **Java 21**: Offers Virtual Threads capability (though we opted for raw Reactive Streams here for maximum raw throughput), excellent pattern matching, and record types which perfectly suit Domain-Driven Design aggregates.
-- **Spring WebFlux (Netty)**: Inventory reservation is a highly I/O bound process (waiting on database locks, Redis locks, and message brokers). A non-blocking Netty server means we don't block an OS thread for every concurrent HTTP request, allowing us to handle thousands of concurrent requests on minimal compute resources.
-- **PostgreSQL + R2DBC**: Relational databases are critical for inventory because we absolutely need ACID compliance and `SELECT ... FOR UPDATE` row-level locking to prevent overselling. R2DBC provides a reactive, non-blocking driver to PostgreSQL to match Netty's architecture.
-- **Redis (Redisson)**: We use this as a first-line-of-defense distributed lock. Instead of sending 100 concurrent requests to hammer the database row, Redisson queues or fast-fails them at the cache layer, keeping the database healthy under spike loads (e.g. Flash Sales).
-- **NATS JetStream**: Standard NATS is fire-and-forget. JetStream provides lightweight, persistent, at-least-once message delivery. When a reservation drops, a downstream service (like fulfillment or notification) is guaranteed to receive the event even if they are temporarily offline.
-
 ---
 
 ## Concurrency Strategy
@@ -177,82 +108,27 @@ Replica A  ──► Redis LOCK "A100" ──► DB FOR UPDATE ──► save �
 Replica B  ──► Redis LOCK "A100"  (waits)           ──► DB FOR UPDATE ...
 ```
 
+---
 
+## Design Patterns
+
+| Pattern      | Location                                 | Purpose                                                    |
+|--------------|------------------------------------------|------------------------------------------------------------|
+| **Factory**  | `application/factory/ReservationFactory` | Validates SKUs, builds `ReservationAggregate`; isolates create logic |
+| **State**    | `domain/state/ReservationStateMachine`   | PENDING→CONFIRMED or CANCELLED; terminal states throw     |
+| **Observer** | `infrastructure/messaging/NatsEventPublisher` | Domain events published to NATS decoupled from core logic |
+| **Strategy** | `domain/port/LockService`                | Swappable locking strategy (Redisson implementation)      |
 
 ---
 
-## API Reference
-
-### `POST /api/reservations`
-
-**Request**
-```json
-{
-  "orderId": "ORD-1001",
-  "items": [
-    { "sku": "A100", "quantity": 5 }
-  ]
-}
-```
-**Response** `201 Created`
-
-```json
-{
-  "id": "uuid",
-  "orderId": "ORD-1001",
-  "status": "PENDING",
-  "items": [{ "id": "uuid", "sku": "A100", "quantity": 5 }],
-  "createdAt": "...",
-  "updatedAt": "..."
-}
-```
-
-### `POST /api/reservations/{id}/confirm`
-Response `200 OK` with `status: "CONFIRMED"`.
-
-### `POST /api/reservations/{id}/cancel`
-Response `200 OK` with `status: "CANCELLED"`.  
-Reserved stock is released atomically.
-
-### Error Responses
-
-| HTTP | Code | Cause |
-|------|------|-------|
-| 400 | `VALIDATION_ERROR` | Missing/invalid fields |
-| 400 | `INVALID_STATE_TRANSITION` | e.g. confirming a CANCELLED reservation |
-| 404 | `NOT_FOUND` | Unknown reservation ID |
-| 404 | `PRODUCT_NOT_FOUND` | Unknown SKU |
-| 409 | `INSUFFICIENT_STOCK` | Not enough available units |
-| 409 | `LOCK_CONFLICT` | High contention; retry |
-
 ---
 
-## Database Schema
+## Testing & API Reference
 
-```
-products          inventory             reservations        reservation_items
-─────────         ─────────────────     ────────────────    ─────────────────────
-id (PK)           id (PK)               id (PK)             id (PK)
-sku (UNIQUE)      product_id (FK)       order_id            reservation_id (FK)
-name              total_stock           status              sku
-created_at        reserved_stock        created_at          quantity
-                  version (OPT LOCK)    updated_at
-```
-
----
-
-## Running Tests
-
-```bash
-# All unit tests
-mvn test
-
-# Specific test class
-mvn -Dtest=ReservationStateMachineTest test
-mvn -Dtest=InventoryServiceTest test
-mvn -Dtest=ReservationServiceTest test
-mvn -Dtest=InventoryTest test
-```
+Please see [how_to_test.md](how_to_test.md) for detailed instructions on:
+- Smoke testing the API with curl
+- Full REST API Request/Response schemas
+- How to execute the unit test suite
 
 ---
 
@@ -280,16 +156,24 @@ kubectl scale deployment inventory-reservation --replicas=3
 
 ---
 
-## Environment Variables
+### Package Structure
 
-| Variable       | Default        | Description              |
-|----------------|----------------|--------------------------|
-| `DB_HOST`      | `localhost`    | PostgreSQL host          |
-| `DB_PORT`      | `5432`         | PostgreSQL port          |
-| `DB_NAME`      | `inventory_db` | Database name            |
-| `DB_USER`      | `postgres`     | DB username              |
-| `DB_PASS`      | `postgres`     | DB password              |
-| `REDIS_HOST`   | `localhost`    | Redis / Sentinel host    |
-| `REDIS_PORT`   | `6379`         | Redis port               |
-| `NATS_URL`     | `nats://localhost:4222` | NATS server URL |
-| `SERVER_PORT`  | `8080`         | HTTP port                |
+```
+com.warehouse.inventory
+├── api/                    ← Controllers, DTOs, ExceptionHandler
+├── application/            ← Use-case services, Factory
+│   ├── factory/            (Factory Pattern)
+│   └── service/
+├── domain/                 ← Entities, State Pattern, Events, Ports
+│   ├── exception/
+│   ├── event/
+│   ├── model/
+│   ├── port/
+│   ├── repository/
+│   └── state/              (State Pattern)
+├── infrastructure/         ← Redis cache, Redisson lock, NATS publisher
+│   ├── cache/
+│   ├── lock/
+│   └── messaging/
+└── config/                 ← DatabaseConfig, NatsConfig, RedisConfig, AotRuntimeHints
+```
