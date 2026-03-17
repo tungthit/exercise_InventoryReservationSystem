@@ -2,6 +2,7 @@
 
 High-concurrency inventory reservation service built with **Java 21**, **Spring WebMVC (Virtual Threads)**, **NATS JetStream**, **Redis**, and **PostgreSQL**.
 
+> **Note:** Authentication (JWT/OAuth2) is intentionally omitted to simplify testing. In production, this internal service operates behind a secure API Gateway.
 ---
 
 ## 🚀 How to Run Locally
